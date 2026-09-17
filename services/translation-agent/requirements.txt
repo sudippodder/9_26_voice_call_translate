@@ -1,0 +1,21 @@
+# =============================================================================
+# Voice Translator — Translation Agent dependencies
+# =============================================================================
+# LiveKit Python SDK — provides both livekit.api (token minting) AND
+# livekit.rtc (Room, AudioSource, RemoteAudioTrack, etc.) for direct room connection.
+livekit>=1.0.0
+# Async + utils
+httpx>=0.28.1
+websockets>=14.1
+numpy>=2.2.1
+# Config
+pydantic>=2.10.4
+pydantic-settings>=2.7.1
+# Redis (joins rooms via Redis queue — no LiveKit dispatcher needed)
+redis>=5.2.1
+# Logging
+structlog>=24.4.0
+# Tests
+pytest>=8.3.4
+pytest-asyncio>=0.25.0
+anyio>=4.7.0

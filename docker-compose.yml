@@ -1,0 +1,108 @@
+# =============================================================================
+# Voice Translator — Local Development Docker Compose
+# =============================================================================
+# Spins up: postgres, redis, FastAPI, translation-agent.
+# LiveKit is expected to be LiveKit Cloud (set LIVEKIT_URL in .env).
+# Frontend is run with `pnpm dev` for hot reload during development.
+# =============================================================================
+
+version: "3.9"
+
+services:
+
+  postgres:
+    image: postgres:17-alpine
+    container_name: vtranslate-postgres
+    restart: unless-stopped
+    environment:
+      POSTGRES_USER: vtranslate
+      POSTGRES_PASSWORD: vtranslate
+      POSTGRES_DB: voice_translator
+    ports:
+      - "5432:5432"
+    volumes:
+      - vtranslate_pgdata:/var/lib/postgresql/data
+      - ./migrations:/docker-entrypoint-initdb.d:ro
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U vtranslate -d voice_translator"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  redis:
+    image: redis:7-alpine
+    container_name: vtranslate-redis
+    restart: unless-stopped
+    command: ["redis-server", "--appendonly", "yes", "--maxmemory", "256mb", "--maxmemory-policy", "allkeys-lru"]
+    ports:
+      - "6379:6379"
+    volumes:
+      - vtranslate_redisdata:/data
+    healthcheck:
+      test: ["CMD", "redis-cli", "ping"]
+      interval: 5s
+      timeout: 3s
+      retries: 10
+
+  api:
+    build:
+      context: ./services/api
+      dockerfile: Dockerfile
+    container_name: vtranslate-api
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://vtranslate:vtranslate@postgres:5432/voice_translator
+      - REDIS_URL=redis://redis:6379/0
+    ports:
+      - "8000:8000"
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/api:/app
+    command: ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000", "--reload"]
+
+  translation-agent:
+    build:
+      context: ./services/translation-agent
+      dockerfile: Dockerfile
+    container_name: vtranslate-agent
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/translation-agent:/app
+    command: ["python", "-m", "app.main"]
+
+  worker:
+    build:
+      context: ./services/worker
+      dockerfile: Dockerfile
+    container_name: vtranslate-worker
+    restart: unless-stopped
+    env_file:
+      - .env
+    environment:
+      - DATABASE_URL=postgresql+asyncpg://vtranslate:vtranslate@postgres:5432/voice_translator
+      - REDIS_URL=redis://redis:6379/0
+    depends_on:
+      postgres:
+        condition: service_healthy
+      redis:
+        condition: service_healthy
+    volumes:
+      - ./services/worker:/app
+    command: ["python", "-m", "app.main"]
+
+volumes:
+  vtranslate_pgdata:
+  vtranslate_redisdata:

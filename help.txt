@@ -1,0 +1,30 @@
+Voice translate
+
+Voice Translate
+
+
+LIVEKIT_URL=wss://voice-translate-n8u0jfog.livekit.cloud
+LIVEKIT_API_KEY=API6a5eyHfkX2pU
+LIVEKIT_API_SECRET=Bb8rMqzurB1rmDdpbRKeMCPYGjVZRHEOR50BnoKnRmA
+
+tar -xzf voice-translator.tar.gz
+cd voice-translator
+
+# 1. Copy env and fill in LiveKit + OpenAI credentials
+cp .env.example .env
+
+# 2. Boot backend services
+docker compose up -d postgres redis api worker translation-agent
+
+# 3. Start frontend
+cd apps/web
+npm install
+npm run dev
+# Open http://localhost:5173
+
+
+docker compose up -d --build translation-agent
+
+
+/home/z/my-project/voice-translator
+
