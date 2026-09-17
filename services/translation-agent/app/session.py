@@ -23,6 +23,22 @@ from app.vad import StreamingVAD, VadEventKind
 log = get_logger("session")
 
 
+def create_translator(source_language: str, target_language: str):
+    """Factory: pick the right translator based on TRANSLATOR_PROVIDER env var."""
+    provider = (settings.translator_provider or "openai").lower().strip()
+    if provider == "gemini":
+        from app.gemini_translator import GeminiRealtimeTranslator
+        return GeminiRealtimeTranslator(
+            source_language=source_language,
+            target_language=target_language,
+        )
+    # Default: OpenAI
+    return RealtimeTranslator(
+        source_language=source_language,
+        target_language=target_language,
+    )
+
+
 @dataclass
 class TranslationSessionConfig:
     call_id: str
@@ -57,7 +73,8 @@ class TranslationSession:
         on_input_transcript: Optional[callable] = None,  # async(TranscriptEvent) -> None
     ):
         self.cfg = cfg
-        self.translator = translator or RealtimeTranslator(
+        # Use the factory if no translator is explicitly injected
+        self.translator = translator or create_translator(
             source_language=cfg.source_language,
             target_language=cfg.target_language,
         )
@@ -202,8 +219,8 @@ class TranslationSession:
             await self.translator.close()
         except Exception:  # noqa: BLE001
             pass
-        # New translator instance — keep languages/voice
-        self.translator = RealtimeTranslator(
+        # New translator instance — use the factory so the right provider is used
+        self.translator = create_translator(
             source_language=self.cfg.source_language,
             target_language=self.cfg.target_language,
         )

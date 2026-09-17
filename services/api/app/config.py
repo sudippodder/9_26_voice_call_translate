@@ -43,10 +43,19 @@ class Settings(BaseSettings):
     livekit_token_ttl: int = 3600
 
     # AI
+    translator_provider: str = "openai"  # "openai" or "gemini"
+
+    # OpenAI Realtime API
     openai_api_key: str = ""
-    realtime_translation_model: str = "gpt-realtime-translate"
+    # MUST be a bidirectional realtime model — see agent config.py for details.
+    realtime_translation_model: str = "gpt-4o-realtime-preview"
     realtime_translation_voice: str = "alloy"
     openai_realtime_base_url: str = "wss://api.openai.com/v1/realtime"
+
+    # Gemini Live API
+    gemini_api_key: str = ""
+    gemini_model: str = "gemini-2.5-flash-native-audio-latest"
+    gemini_voice: str = "Aoede"
 
     # VAD / audio
     vad_prefix_padding_ms: int = 250

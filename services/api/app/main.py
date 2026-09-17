@@ -18,6 +18,7 @@ from app.config import settings
 from app.logging_setup import configure_logging, get_logger
 from app.routes import calls as calls_routes
 from app.routes import misc as misc_routes
+from app.routes import test_endpoint as test_routes
 from app.routes import usage as usage_routes
 from app.routes import users as users_routes
 
@@ -63,6 +64,7 @@ app.include_router(misc_routes.router)
 app.include_router(users_routes.router)
 app.include_router(calls_routes.router)
 app.include_router(usage_routes.router)
+app.include_router(test_routes.router)
 
 
 @app.get("/")

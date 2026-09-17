@@ -7,9 +7,9 @@ ENV PYTHONUNBUFFERED=1 \
 
 WORKDIR /app
 
-# System deps for asyncpg / cryptography
+# System deps for asyncpg / cryptography + ffmpeg for audio conversion
 RUN apt-get update && apt-get install -y --no-install-recommends \
-    build-essential libpq-dev curl \
+    build-essential libpq-dev curl ffmpeg \
     && rm -rf /var/lib/apt/lists/*
 
 COPY requirements.txt .

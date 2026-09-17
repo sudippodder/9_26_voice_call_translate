@@ -23,7 +23,6 @@ from __future__ import annotations
 
 import asyncio
 import json
-import time
 from dataclasses import dataclass
 from typing import AsyncIterator, Optional, Callable, Awaitable
 
@@ -35,6 +34,14 @@ from app.logging_setup import get_logger
 from app.prompts import build_translation_prompt
 
 log = get_logger("translator")
+
+
+class _ModelNotFoundError(Exception):
+    """Internal: OpenAI rejected the model name."""
+
+
+class _InvalidKeyError(Exception):
+    """Internal: OpenAI rejected the API key."""
 
 
 @dataclass
@@ -113,32 +120,89 @@ class RealtimeTranslator:
     def set_generation_id(self, gen: int) -> None:
         self._current_generation_id = gen
 
-    def _is_openai_configured(self) -> bool:
-        k = settings.openai_api_key or ""
-        return bool(k and not k.startswith("sk-xxx") and k != "change-me" and len(k) > 15)
-
     # ------------------------------------------------------------------ connect
     async def connect(self) -> None:
-        """Open the WebSocket and configure the session."""
-        if not self._is_openai_configured():
-            self._passthrough_mode = True
-            log.warning(
-                "translator_passthrough_mode",
-                source=self.source_language,
-                target=self.target_language,
-                reason="OPENAI_API_KEY is not configured or is a placeholder. Audio will stream in direct passthrough mode.",
+        """Open the WebSocket and configure the session.
+
+        Fails LOUDLY if OpenAI is not configured or the model name is wrong.
+        We do NOT fall back to passthrough — that would let callers hear each
+        other's raw mic audio and silently mask the fact that translation
+        isn't actually happening.
+        """
+        # Validate API key
+        k = (settings.openai_api_key or "").strip()
+        if not k or k.startswith("sk-xxx") or len(k) < 20:
+            raise RuntimeError(
+                "OPENAI_API_KEY is not configured (or is still the placeholder). "
+                "Set a valid key in .env — without it, no translation can happen."
             )
-            return
 
-        url = self._auth_url()
-        headers = self._auth_headers()
+        # List of model names to try in order. OpenAI occasionally renames /
+        # retires aliases, so we try the most likely candidates. The first one
+        # that opens a WebSocket without model_not_found wins.
+        candidate_models = self._candidate_models()
 
-        log.info(
-            "translator_connecting",
-            model=self.model,
-            source=self.source_language,
-            target=self.target_language,
+        last_error: Optional[Exception] = None
+        for model_name in candidate_models:
+            try:
+                await self._try_connect(model_name)
+                # Success — remember which model worked and return
+                self.model = model_name
+                log.info("translator_connected", model=model_name,
+                         tried_models=candidate_models)
+                return
+            except _ModelNotFoundError as e:
+                last_error = e
+                log.warning("translator_model_unavailable",
+                            model=model_name, error=str(e))
+                continue  # try the next candidate
+            except _InvalidKeyError as e:
+                # Auth error — no point trying other models
+                raise RuntimeError(
+                    "OpenAI rejected the API key. Check OPENAI_API_KEY in .env. "
+                    "Verify at https://platform.openai.com/api-keys"
+                ) from e
+
+        # All candidates failed
+        raise RuntimeError(
+            f"OpenAI rejected ALL model names tried: {candidate_models}. "
+            f"Last error: {last_error}. "
+            f"\n\nThis usually means one of:\n"
+            f"  1. Your OpenAI API key is invalid — check at https://platform.openai.com/api-keys\n"
+            f"  2. Your account has no billing set up — add a card at https://platform.openai.com/account/billing\n"
+            f"  3. Your account doesn't have Realtime API access — check https://platform.openai.com/docs/guides/realtime\n"
+            f"  4. The model names have changed — verify the current list at the URL above\n\n"
+            f"To list models available to your key, run:\n"
+            f"  curl -H 'Authorization: Bearer $OPENAI_API_KEY' https://api.openai.com/v1/models | grep -i realtime"
         )
+
+    def _candidate_models(self) -> list[str]:
+        """Build list of model names to try. User-configured first, then known fallbacks."""
+        # User's configured model first (if non-default)
+        candidates: list[str] = []
+        if self.model and self.model not in candidates:
+            candidates.append(self.model)
+        # Then known-good fallbacks (most recent first)
+        fallbacks = [
+            "gpt-4o-realtime-preview",
+            "gpt-4o-realtime-preview-2024-12-17",
+        ]
+        for f in fallbacks:
+            if f not in candidates:
+                candidates.append(f)
+        return candidates
+
+    async def _try_connect(self, model_name: str) -> None:
+        """Attempt to connect with a specific model name. Raises on failure."""
+        url = f"{settings.openai_realtime_base_url.rstrip('/')}?model={model_name}"
+        headers = {
+            "Authorization": f"Bearer {settings.openai_api_key}",
+        }
+
+        log.info("translator_connecting",
+                 model=model_name,
+                 source=self.source_language,
+                 target=self.target_language)
 
         try:
             self._ws = await websockets.connect(url, additional_headers=headers, max_size=2**22)
@@ -150,50 +214,21 @@ class RealtimeTranslator:
             # Spawn sender + receiver loops
             self._send_task = asyncio.create_task(self._send_loop(), name="translator-send")
             self._recv_task = asyncio.create_task(self._recv_loop(), name="translator-recv")
-            log.info("translator_connected", model=self.model)
         except Exception as e:  # noqa: BLE001
-            log.error("translator_connect_failed", error=str(e))
-            log.warning("translator_falling_back_to_passthrough", error=str(e))
-            self._passthrough_mode = True
+            err_str = str(e)
+            if "model_not_found" in err_str or "invalid_request_error.model_not_found" in err_str:
+                raise _ModelNotFoundError(
+                    f"Model '{model_name}' not found"
+                ) from e
+            if "invalid_api_key" in err_str:
+                raise _InvalidKeyError("Invalid API key") from e
+            raise
 
     # ------------------------------------------------------------------ send
     async def send_audio(self, samples: np.ndarray) -> None:
         """Push float32 mono samples. Internally converted to pcm16 + base64."""
         if self._closed:
             return
-        if getattr(self, "_passthrough_mode", False):
-            # In passthrough/test mode, forward audio directly to playback queue
-            chunk = TranslatedAudioChunk(
-                samples=samples,
-                sample_rate=settings.audio_sample_rate,
-                generation_id=self._current_generation_id,
-            )
-            try:
-                self._audio_out_q.put_nowait(chunk)
-            except asyncio.QueueFull:
-                try:
-                    self._audio_out_q.get_nowait()
-                    self._audio_out_q.put_nowait(chunk)
-                except Exception:  # noqa: BLE001
-                    pass
-
-            # If speech is detected, emit transcript activity
-            if len(samples) > 0 and np.max(np.abs(samples)) > 0.03:
-                now = time.monotonic()
-                if not hasattr(self, "_last_pass_transcript") or now - getattr(self, "_last_pass_transcript", 0) > 2.0:
-                    self._last_pass_transcript = now
-                    try:
-                        self._transcript_q.put_nowait(
-                            TranscriptEvent(
-                                text=f"Streaming voice ({self.source_language.upper()} ➔ {self.target_language.upper()})",
-                                is_final=False,
-                                generation_id=self._current_generation_id,
-                            )
-                        )
-                    except Exception:  # noqa: BLE001
-                        pass
-            return
-
         try:
             self._audio_in_q.put_nowait(samples)
         except asyncio.QueueFull:
@@ -316,7 +351,29 @@ class RealtimeTranslator:
                         pass
 
             elif etype == "error":
-                log.warning("translator_error_event", event=evt)
+                err = evt.get("error", {})
+                err_msg = err.get("message", str(evt))
+                err_code = err.get("code", "unknown")
+                err_type = err.get("type", "unknown")
+                log.error(
+                    "translator_error_event",
+                    error_code=err_code,
+                    error_type=err_type,
+                    error_message=err_msg,
+                    raw_event=evt,
+                )
+                # If the error is fatal (model not found, auth), close the socket
+                # so the agent can recreate the session with a corrected config.
+                if err_code in ("model_not_found", "invalid_api_key", "invalid_request"):
+                    log.error(
+                        "translator_fatal_error_closing",
+                        hint="Check REALTIME_TRANSLATION_MODEL and OPENAI_API_KEY in .env",
+                    )
+                    self._closed = True
+                    try:
+                        await self._ws.close()
+                    except Exception:  # noqa: BLE001
+                        pass
             # All other event types are ignored — we only care about audio + transcript.
 
     # ------------------------------------------------------------------ receive

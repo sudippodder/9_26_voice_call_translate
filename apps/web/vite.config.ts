@@ -1,11 +1,10 @@
 import { defineConfig } from "vite";
 import react from "@vitejs/plugin-react";
-import basicSsl from "@vitejs/plugin-basic-ssl";
 import path from "node:path";
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  plugins: [react(), basicSsl()],
+  plugins: [react()],
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),
@@ -16,6 +15,8 @@ export default defineConfig({
     port: 5173,
     host: true,
     strictPort: false,
+    // Proxy API calls to the FastAPI backend.
+    // VITE_API_URL in .env should be EMPTY so the frontend uses these relative URLs.
     proxy: {
       "/api": {
         target: "http://localhost:8000",

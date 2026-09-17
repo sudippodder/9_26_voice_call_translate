@@ -9,6 +9,7 @@ import {
 } from "@/services/api";
 import { LanguageSelect } from "@/components/LanguageSelect";
 import { SoundTestButton } from "@/components/SoundTestButton";
+import { MicTestModal } from "@/components/MicTestModal";
 import { Modal } from "@/components/Modal";
 import { Icon } from "@/components/icons";
 
@@ -40,6 +41,7 @@ export const HomeScreen: React.FC = () => {
   const [loginName, setLoginName] = useState("");
   const [loginOpen, setLoginOpen] = useState(false);
   const [apiHealth, setApiHealth] = useState<string>("checking");
+  const [micTestOpen, setMicTestOpen] = useState(false);
   const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
   // Auto-open login if no auth
@@ -153,8 +155,18 @@ export const HomeScreen: React.FC = () => {
           </div>
           <LanguageSelect label="I want to hear" value={myHear} onChange={setHear} languages={languages} />
           <div className="pt-2 flex items-center justify-between border-t border-slate-800/80">
-            <span className="text-xs text-slate-400">Speaker & Sound Check:</span>
-            <SoundTestButton size="sm" variant="secondary" />
+            <span className="text-xs text-slate-400">Sound & Mic Check:</span>
+            <div className="flex gap-2">
+              <button
+                onClick={() => setMicTestOpen(true)}
+                className="flex items-center gap-1.5 rounded-lg bg-slate-800 px-3 py-1.5 text-xs font-medium text-slate-200 hover:bg-slate-700"
+                title="Record your voice and hear the translation"
+              >
+                <Icon.Mic className="h-3.5 w-3.5" />
+                Mic & Translation Test
+              </button>
+              <SoundTestButton size="sm" variant="secondary" />
+            </div>
           </div>
         </section>
 
@@ -284,6 +296,8 @@ export const HomeScreen: React.FC = () => {
           {busy ? "Signing in…" : "Sign in"}
         </button>
       </Modal>
+
+      <MicTestModal open={micTestOpen} onClose={() => setMicTestOpen(false)} />
     </div>
   );
 };

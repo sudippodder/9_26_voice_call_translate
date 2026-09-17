@@ -6,8 +6,6 @@
 # Frontend is run with `pnpm dev` for hot reload during development.
 # =============================================================================
 
-version: "3.9"
-
 services:
 
   postgres:
